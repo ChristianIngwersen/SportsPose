@@ -111,6 +111,7 @@ def get_3dpw_sequence_dist(data_path):
         with open(pickle_file, "rb") as f:
             data = pickle.load(f, encoding="latin1")
         joints = data["jointPositions"][0].reshape(-1, 24, 3)
+        joints = joints[data["campose_valid"][0].astype(np.bool_), ...]
 
         # Compute pairwise euclidean distance between each point in the rows in the array
         sequence_dist = np.linalg.norm(
