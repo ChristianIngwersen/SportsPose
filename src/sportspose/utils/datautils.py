@@ -3,6 +3,7 @@ import glob
 import os
 import numpy as np
 import pickle
+import scipy.io
 
 
 def get_total_capture_sequence_dist(data_path):
@@ -132,5 +133,41 @@ def get_3dpw_table_metrics():
     frames = compute_frames_under_cm_threshold(sequence_movement, threshold=10)
 
 
+def get_humaneva1_sequence_dist(data_path):
+    """
+    Get the HumanEva1 data
+    Then compute the pairwise euclidean distance between each point in the rows in the array.
+    :param data_path: path to the HumanEva1 capture data
+    :return: sequence dist
+    """
+    # Get all mat files
+    mat_files = glob.glob(os.path.join(data_path, "S*", "Mocap_Data", "*.mat"))
+    sequence_movements = []
+    for mat_file in mat_files:
+        # Load mat file
+        mat = scipy.io.loadmat(mat_file)
+
+        # Get the joint positions
+        joints = mat["Markers"]
+
+        # Compute pairwise euclidean distance between each point in the rows in the array
+        sequence_dist = np.linalg.norm(
+            joints[1:, :, :] - joints[:-1, :, :], axis=2
+        ).mean(axis=1)
+
+        # Convert to cm from mm
+        sequence_dist = sequence_dist / 10
+
+        sequence_movements.append(sequence_dist)
+
+    return sequence_movements
+
+
+def get_humaneva1_table_metrics():
+    sequence_movement = get_humaneva1_sequence_dist("/home/cin/humaneva1")
+    frames = compute_frames_under_cm_threshold(sequence_movement, threshold=5)
+    frames = compute_frames_under_cm_threshold(sequence_movement, threshold=10)
+
+
 if __name__ == "__main__":
-    get_3dpw_table_metrics()
+    get_humaneva1_table_metrics()
