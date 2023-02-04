@@ -169,5 +169,36 @@ def get_humaneva1_table_metrics():
     frames = compute_frames_under_cm_threshold(sequence_movement, threshold=10)
 
 
+def get_humaneva2_sequence_dist(data_path):
+    """
+    Get the HumanEva2 data
+    Then compute the pairwise euclidean distance between each point in the rows in the array.
+    :param data_path: path to the HumanEva2 capture data
+    :return: sequence dist
+    """
+    # Get all mat files
+    mat_files = glob.glob(os.path.join(data_path, "S*", "Mocap_Data", "C*.mat"))
+    sequence_movements = []
+    for mat_file in mat_files:
+        # Load mat file
+        mat = scipy.io.loadmat(mat_file)
+
+        # Get the joint positions
+        joints = mat["Markers"]
+
+        # Compute pairwise euclidean distance between each point in the rows in the array
+        sequence_dist = np.linalg.norm(
+            joints[1:, :, :] - joints[:-1, :, :], axis=2
+        ).mean(axis=1)
+
+        # Convert to cm from mm
+        sequence_dist = sequence_dist / 10
+
+        sequence_movements.append(sequence_dist)
+
+    return sequence_movements
+
+
 if __name__ == "__main__":
-    get_humaneva1_table_metrics()
+    data_path = "/Users/cin/Projects/SportsPose/data/humaneva2/HumanEva_II"
+    x = get_humaneva2_sequence_dist(data_path)
