@@ -88,15 +88,17 @@ def compute_frames_under_cm_threshold(sequence_movements, threshold=10):
                 frames += 1
                 base_frames += 1
                 tmp = 0
-    print(base_frames, frames)
+    print(f"{frames}/{base_frames}: {(frames/base_frames)*100:.2f}")
 
     return base_frames, frames
 
 
 def get_totalcapture_table_metrics():
+    print("TotalCapture")
     sequence_movement = get_total_capture_sequence_dist("data/totalcapture")
     frames = compute_frames_under_cm_threshold(sequence_movement, threshold=5)
     frames = compute_frames_under_cm_threshold(sequence_movement, threshold=10)
+    print()
 
 
 def get_3dpw_sequence_dist(data_path):
@@ -128,9 +130,11 @@ def get_3dpw_sequence_dist(data_path):
 
 
 def get_3dpw_table_metrics():
+    print("3DPW")
     sequence_movement = get_3dpw_sequence_dist("data/3dpw")
     frames = compute_frames_under_cm_threshold(sequence_movement, threshold=5)
     frames = compute_frames_under_cm_threshold(sequence_movement, threshold=10)
+    print()
 
 
 def get_humaneva1_sequence_dist(data_path):
@@ -164,9 +168,11 @@ def get_humaneva1_sequence_dist(data_path):
 
 
 def get_humaneva1_table_metrics():
+    print("HumanEva1")
     sequence_movement = get_humaneva1_sequence_dist("/home/cin/humaneva1")
     frames = compute_frames_under_cm_threshold(sequence_movement, threshold=5)
     frames = compute_frames_under_cm_threshold(sequence_movement, threshold=10)
+    print()
 
 
 def get_humaneva2_sequence_dist(data_path):
@@ -199,6 +205,51 @@ def get_humaneva2_sequence_dist(data_path):
     return sequence_movements
 
 
+def get_sportspose_sequence_dist(data_path):
+    """
+    Get the SportsPose data
+    Then compute the pairwise euclidean distance between each point in the rows in the array.
+    :param data_path: path to the SportsPose capture data
+    :return: sequence dist
+    """
+    # Get all npy files
+    npy_files = glob.glob(os.path.join(data_path, "**", "**", "**", "*.npy"))
+    sequence_movements = []
+
+    for npy_file in npy_files:
+        # Check if filename contains "golf"
+        if "golf" in npy_file:
+            continue
+        # Load file
+        joints = np.load(npy_file)
+
+        # Select only wrist joints
+        # joints = joints[:, [9, 10], :]
+
+        # Compute pairwise euclidean distance between each point in the rows in the array
+        sequence_dist = np.linalg.norm(
+            joints[1:, :, :] - joints[:-1, :, :], axis=2
+        ).mean(axis=1)
+
+        # Convert to cm from m
+        sequence_dist = sequence_dist * 100
+
+        sequence_movements.append(sequence_dist)
+
+    return sequence_movements
+
+
 if __name__ == "__main__":
-    data_path = "/Users/cin/Projects/SportsPose/data/humaneva2/HumanEva_II"
-    x = get_humaneva2_sequence_dist(data_path)
+    # data_path = "/Users/cin/Projects/SportsPose/data/humaneva2/HumanEva_II"
+    # x = get_humaneva2_sequence_dist(data_path)
+
+    print("SportsPose")
+    data_path = "/Users/cin/Projects/SportsPose/data/sportspose"
+    sequence_movement = get_sportspose_sequence_dist(data_path)
+    frames = compute_frames_under_cm_threshold(sequence_movement, threshold=5)
+    frames = compute_frames_under_cm_threshold(sequence_movement, threshold=10)
+    print("")
+
+    get_3dpw_table_metrics()
+    # get_humaneva1_table_metrics()
+    get_totalcapture_table_metrics()
