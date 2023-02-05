@@ -1,0 +1,6 @@
+@misc{ingwersen2023sportspose,
+  author = {Ingwersen, Christian and Mikkelstrup, Christian and Hannemose, Morten and Jensen, Janus and Dahl, Anders},
+  title = {SportsPose - A Dynamic 3D sports pose dataset},
+  publisher = {arXiv},
+  year = {2023},
+}
