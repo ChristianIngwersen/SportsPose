@@ -9,7 +9,7 @@ def chunks(lst, n, m=0):
         yield lst[i : i + n]
 
 
-SPORTSPOSE_CAMERA_INDEX_FO = {
+SPORTSPOSE_CAMERA_INDEX_RIGHT = {
     "indoor": {
         "S00": 3,
         "S01": 3,
@@ -42,4 +42,4 @@ SPORTSPOSE_CAMERA_INDEX_FO = {
     },
 }
 
-VIEW_TO_SERIAL = {"FO": "27087"}
+VIEW_TO_SERIAL = {"right": "27087"}

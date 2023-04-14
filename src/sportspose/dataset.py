@@ -10,7 +10,7 @@ import torch.utils.data
 from PIL import Image
 
 from sportspose.camera import Camera
-from sportspose.utils import SPORTSPOSE_CAMERA_INDEX_FO, VIEW_TO_SERIAL, chunks
+from sportspose.utils import SPORTSPOSE_CAMERA_INDEX_RIGHT, VIEW_TO_SERIAL, chunks
 
 
 class Measurement:
@@ -136,7 +136,7 @@ class SyncIndex:
         self.joints_3d_idx = joints_3d_idx
 
 
-def sportspose_load_function(data_dir, video_root_dir, views={"FO": {}}):
+def sportspose_load_function(data_dir, video_root_dir, views={"right": {}}):
     """
     Assumes single dir to sportspose outer folder.
     Within this folder the structure should be
@@ -159,8 +159,8 @@ def sportspose_load_function(data_dir, video_root_dir, views={"FO": {}}):
     measurements = []
 
     # Update known indices for sessions
-    if "FO" in views:
-        views["FO"].update(SPORTSPOSE_CAMERA_INDEX_FO)
+    if "right" in views:
+        views["right"].update(SPORTSPOSE_CAMERA_INDEX_RIGHT)
 
     # regex to find propperly named folders/files
     re_day = r"^[inout]+door$"
@@ -211,6 +211,7 @@ def sportspose_load_function(data_dir, video_root_dir, views={"FO": {}}):
                             "person_id": personname,
                             "dataset": "SportsPose",
                             "markers_exists": dayname == "qualisys",
+                            "tag": dayname,
                         }
 
                         # Currently missing how to get valid_frames and framerate
@@ -249,7 +250,7 @@ def sportspose_load_function(data_dir, video_root_dir, views={"FO": {}}):
                                 video_root_dir, rel_video_path
                             )
 
-                            metadata["date"] = rel_video_path[-17:]
+                            metadata["datetime"] = rel_video_path[-17:]
 
                             if not os.path.isdir(abs_video_path):
                                 warnings.warn(
@@ -326,10 +327,10 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         return_preset="3d_pose_estimation",
         seq_size=1,
         overlap_size=0,
-        ts_view="FO",
+        ts_view="right",
         do_skip_invalid_frames=True,
         convert_3d_points=None,
-        views=["FO"],
+        views=["right"],
         transform=None,
         swing_idxs=None,
         video_root_dir=None,
@@ -338,6 +339,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         whitelist={},
         sample_level="frame",
         sample_method=None,
+        validation_dataset=False,
     ):
         """
             Args:
@@ -367,13 +369,11 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.marker_format = marker_format
-        self.index_map = (
-            {}
-        )  # Create index map: idx -> (measurement_idx, range(start, end), marker_idxs)
         self.sample_level = sample_level
         self.sample_method = (
             self.sample_uniform if sample_method is None else sample_method
         )
+        self.validation_dataset = validation_dataset
         if dataset_type.lower() == "sportspose":
 
             if video_root_dir is None:
@@ -382,7 +382,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
             data_dir = os.path.join(data_dir, "data")
 
             self.measurements = sportspose_load_function(
-                data_dir, video_root_dir, views={"FO": {}}
+                data_dir, video_root_dir, views={"right": {}}
             )
 
         # Check if the settings for returning batches are a preset or custom setting
@@ -392,10 +392,13 @@ class SportsPoseDataset(torch.utils.data.Dataset):
             presets = {
                 "3d_pose_estimation": {
                     "joints_2d": True,
-                    "joints_3d": True,
+                    "joints_3d": {
+                        "data_points": True,
+                    },
                     "video": {
                         "views": True,
                         "image": True,
+                        "view": {"path": True},
                     },
                 }
             }
@@ -413,20 +416,24 @@ class SportsPoseDataset(torch.utils.data.Dataset):
                 "image": self.idx2image,
                 "calibration": self.idx2calibration,
                 "image_names": self.idx2img_name,
+                "view": {
+                    "path": self.idx2image_path},
             },
             "metadata": {
                 "file_name": self.idx2name,  # shape: (measurement, )
             },
         }
 
-        # add keys of each view in video
+        # Check for video-joint 2d specific transforms
+        self.joints_2d_exists = False
+        self.video_transform = False
         if "video" in self.batch_return_vals.keys():
-            if "view" in self.batch_return_vals["video"].keys():
-                for view in views:
-                    self.batch_return_vals["video"][view] = self.batch_return_vals[
-                        "video"
-                    ]["view"]
-                    self.key2func["video"][view] = {}
+            if "image" in self.batch_return_vals["video"].keys():
+                # Only enable video transform if there actually is a transform
+                if transform is not None:
+                    self.video_transform = True
+        if "joints_2d" in self.batch_return_vals.keys():
+            self.joints_2d_exists = True
 
         self.blacklist = blacklist
         self.whitelist = whitelist
@@ -469,7 +476,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         measurement = self.measurements[measure_idx]
         return sample_method(self, measurement)
 
-    def add_frames(self, image_idx_range, measurement, measurement_idx, ts_view):
+    def add_frames(self, image_idx_range, joint_idx, measurement, measurement_idx, ts_view):
         """Helper function for adding data samples containing (measurement, images, and corresponding markers)
         Args:
             image_idx_range (range): The range of the images in the sequence
@@ -485,12 +492,8 @@ class SportsPoseDataset(torch.utils.data.Dataset):
             return
 
         # Get marker indices from timestamps
-        marker_idxs = self.get_idx_from_timestamp(
-            measurement.joints_3d["frame_rate"],
-            measurement.video[ts_view]["timestamps"][image_idx_range],
-        )
+        marker_idxs = range(joint_idx, joint_idx+self.seq_size)
 
-        marker_idxs = marker_idxs
         image_idxs = list(image_idx_range)
 
         # Skip entire sequence if there is an invalid frame
@@ -583,17 +586,18 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         seq_added = 0
         # Go through images in chunks of seq size
         frame_seqs = chunks(range(start, stop), self.seq_size, overlap_size)
-        for image_idx_range in frame_seqs:
-            if self.filter_datapoint(measurement):
-                frame_idx = self.add_frames(
-                    image_idx_range, measurement, measurement_idx, ts_view
-                )
+        if self.filter_datapoint(measurement):
+            for joint_idx, image_idx_range in enumerate(frame_seqs):
+                frame_idx = self.add_frames(image_idx_range, joint_idx, measurement, measurement_idx, ts_view)
                 if frame_idx is not None:
                     # If datapoint was added, also add it to the measurement list
                     frame_idxs[seq_added] = frame_idx
                     seq_added += 1
-        self.video_idx2frame_idx[measurement_idx] = frame_idxs
-        measurement.video["n_valid_seq"] = seq_added
+
+        if len(frame_idxs) > 0:
+            measurement.video["n_valid_seq"] = seq_added
+            # Remember the video_idx is based on the valid sequences sampled from the dataloader
+            self.video_idx2frame_idx[len(self.video_idx2frame_idx)] = frame_idxs
 
     def filter_datapoint(self, measure):
         """Function for checking if measure is legal to add to dataset under black and whitelist.
@@ -893,7 +897,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
     def get_image_paths(self, sync_index, view):
         """Get path of specific image, specified by sync_index.
         In case of sequence of images is indexed, returns list of paths.
-        In case origin of frames are a video, a list containing a single path is retuned.
+        In case origin of frames are a video, a list containing a single path is returned.
         """
         measure = self.measurements[sync_index.measurement_idx]
         frames = measure.video[view]["path"]
@@ -989,36 +993,41 @@ class SportsPoseDataset(torch.utils.data.Dataset):
             return len(self.index_map)
 
         elif self.sample_level == "video":
-            return len(self.measurements)
+            return len(self.video_idx2frame_idx)
 
         else:
             raise "Argument sample_level must be either 'frame' or 'video'. Was :" + str(
                 self.sample_level
             )
 
-    def sample_uniform(self, measurement):
+    def sample_uniform(self, measurements, index):
         """Function for sampling a uniform random frame from a measurement
         Args:
-            measurement (Measurement): Measurement to sample from
+            measurements (Dict of Measurement): Measurements to sample from
+            index (int): Index of the measurement to sample from
 
         Returns:
             frame_idx (int): Index of the frame sampled
         """
 
-        max_val = measurement.video["n_valid_seq"]
+        max_val = len(measurements)
         # Uniform random sample
-        return np.random.choice(max_val)
+        if self.validation_dataset:
+            # Use the same random seed for validation dataset
+            np.random.seed(index)
+        choice = np.random.choice(max_val)
+        # Return the frame index
+        return measurements[choice]
 
-    def video_idx2measurement(self, seq_idx, frame_idx):
-        """Function returns the sample using the measurement index and the frame index
+    def video_idx2measurements(self, seq_idx):
+        """Function returns the measurements corresponding to the video index
         Args:
             seq_idx (int): The index of the measurement chosen
-            frame_idx (int): The index of the frame in the measurement chosen
 
         Returns:
-            measurement (Measurement)
+            measurements (Dict of Measurement)
         """
-        return self.video_idx2frame_idx[seq_idx][frame_idx]
+        return self.video_idx2frame_idx[seq_idx]
 
     def __getitem__(self, index):
         """Function for returning all items specified as true in return_dict.
@@ -1075,7 +1084,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
                     if key == "view":
                         for view in self.views:
                             item[view] = loop_get_item(
-                                index, dataset_attribute, key2func[view], key2name[view]
+                                index, dataset_attribute, key2func["view"], key2name[view]
                             )
                     else:
                         item[key] = loop_get_item(
@@ -1084,19 +1093,32 @@ class SportsPoseDataset(torch.utils.data.Dataset):
 
             return item
 
+
+        if self.sample_level == "video":
+            measurements = self.video_idx2measurements(index)
+            # Convert (video_idx, frame_idx) to video idx
+            index = self.sample_method(measurements, index)
+
         # Set default dictionary to get keys from
         return_dict = self.batch_return_vals
         key2func = self.key2func
         sync_index = self.index_map[index]
         measure = self.measurements[sync_index.measurement_idx]
         key2name = measure.name_dict
-
-        if self.sample_level == "video":
-            frame_idx = self.sample_method(measure)
-            # Convert (video_idx, frame_idx) to video idx
-            index = self.video_idx2measurement(index, frame_idx)
-
         item = loop_get_item(
             index, return_dict=return_dict, key2func=key2func, key2name=key2name
         )
-        return self.transform(item)
+
+        # Apply transforms to any video or 2d joints using albumentations
+        if self.video_transform is True and self.joints_2d_exists is True:
+            for view in self.views:
+                if item["video"]["image"][view].shape[0] > 1:
+                    raise NotImplementedError("Transformations for temporal video is not implemented")
+                transform = self.transform(
+                    image=item["video"]["image"][view][0], keypoints=item["joints_2d"][view][0]
+                )
+                item["video"]["image"][view] = transform["image"][None, ...]
+                item["joints_2d"][view] = torch.tensor(transform["keypoints"])[None, ...]
+        else:
+            item = self.transform(item)
+        return item
