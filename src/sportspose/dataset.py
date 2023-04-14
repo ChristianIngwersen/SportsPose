@@ -163,7 +163,7 @@ def sportspose_load_function(data_dir, video_root_dir, views={"right": {}}):
         views["right"].update(SPORTSPOSE_CAMERA_INDEX_RIGHT)
 
     # regex to find propperly named folders/files
-    re_day = r"^[inout]+door$"
+    re_day = r"^[inout]+doors$"
     re_person = r"^S[0-9]{2}$"
     re_activity = r"^[a-z_]+$"
     re_file = r"^[a-z_]+[0-9]{4}.npy$"

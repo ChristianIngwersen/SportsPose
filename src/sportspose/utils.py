@@ -10,7 +10,7 @@ def chunks(lst, n, m=0):
 
 
 SPORTSPOSE_CAMERA_INDEX_RIGHT = {
-    "indoor": {
+    "indoors": {
         "S00": 3,
         "S01": 3,
         "S02": 3,
@@ -34,7 +34,7 @@ SPORTSPOSE_CAMERA_INDEX_RIGHT = {
         "S20": 2,
         "S21": 2,
     },
-    "outdoor": {
+    "outdoors": {
         "S00": 3,
         "S10": 3,
         "S22": 3,
