@@ -161,3 +161,19 @@ class Camera(object):
         )
 
         return img_pts.squeeze()
+    
+    def camera_to_dict(self):
+        # Convert camera to dict such that it can be used in a pytorch dataloader
+        camera_dict = {
+            "intrinsic": {
+                "f": self.intrinsic.f,
+                "c": self.intrinsic.c,
+                "k": self.intrinsic.k,
+            },
+            "extrinsic": {
+                "T": self.extrinsic.T,
+                "R": self.extrinsic.R,
+                "tpr": self.extrinsic.tpr,
+            },
+        }
+        return camera_dict

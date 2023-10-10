@@ -4,13 +4,14 @@ import re
 import warnings
 
 import cv2
-import decord
 import numpy as np
 import torch.utils.data
 from PIL import Image
 
 from sportspose.camera import Camera
 from sportspose.utils import SPORTSPOSE_CAMERA_INDEX_RIGHT, VIEW_TO_SERIAL, chunks
+
+import decord
 
 
 class Measurement:
@@ -555,7 +556,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
                 new_img = Image.open(frame_path[0])
                 width, height = new_img.size
                 new_img.close()
-            measure.video[view]["img_dims"] = (width, height)
+            measure.video[view]["img_dims"] = torch.tensor([width, height]).int()
 
     def add_measurement(self, measurement, measurement_idx, ts_view, overlap_size):
         """Function for decomposing a sequential measurements into individual datapoints
@@ -706,7 +707,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         Returns:
             np.array: Rotated 2D joints
         """
-        width, height = measure.video[view]["img_dims"]
+        width, height = measure.video[view]["img_dims"].numpy()
         center = (height / 2, width / 2)
         rot = measure.video[view]["numtimesrot90clockwise"]
         if rot == 0:
@@ -789,7 +790,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
             # Case where view is given
             sync_index = self.index_map[index]
             measure = self.measurements[sync_index.measurement_idx]
-            return measure.video[view]["camera"]
+            return measure.video[view]["camera"].camera_to_dict()
 
     def idx2image_path(self, index, view=None):
         """Function for getting all image paths from all views given an index
@@ -1122,3 +1123,34 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         else:
             item = self.transform(item)
         return item
+
+if __name__ == "__main__":
+    datapath = "/work3/ckin/datasets/SportsPose/SportsPose"
+    print("Testing SportsPoseDataset")
+    dataset_no_im = SportsPoseDataset(
+        data_dir=datapath,
+        sample_level="video", 
+        return_preset = {
+            "joints_2d": True,
+            "joints_3d": {
+                "data_points": True,
+            },
+            "metadata": {
+                "file_name": True,
+            },
+            "video": {"view": {"camera": False, "img_dims": True}, "image": False, "calibration": True}
+        },
+        seq_size=243
+    )
+    test_sample = dataset_no_im[0]
+    print(test_sample.keys())
+
+    # Check if 2D joints still is available with the camera mod
+    print(test_sample["joints_2d"]["right"].shape)
+
+    # Check if it works in a pytorch dataloader as intented
+    dataloader = torch.utils.data.DataLoader(dataset_no_im, batch_size=3, shuffle=True)
+    for batch in dataloader:
+        print(batch["video"]["right"]["img_dims"].shape)
+        print(batch["video"]["right"]["img_dims"])
+
