@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 import torch.nn as nn
 import numpy as np
@@ -60,12 +61,14 @@ def p_mpjpe(predicted_batch: ndarray, target_batch: ndarray) -> ndarray:
 
 # PyTorch-based errors (for losses)
 
-def loss_mpjpe(predicted: Tensor, target: Tensor) -> Tensor:
+def loss_mpjpe(predicted: Tensor, target: Tensor, mask: Optional[Tensor] = None) -> Tensor:
     """
     Mean per-joint position error (i.e. mean Euclidean distance),
     often referred to as "Protocol #1" in many papers.
     """
     assert predicted.shape == target.shape
+    if mask is not None:
+        return (mask[..., None, None]*(predicted - target)).norm(dim=-1).sum() / mask.sum()
     return (predicted - target).norm(dim=-1).mean()
 
 
@@ -85,7 +88,7 @@ def loss_2d_weighted(predicted: Tensor, target: Tensor, conf: Tensor) -> Tensor:
     return diff.norm(dim=-1).mean()
 
 
-def n_mpjpe(predicted: Tensor, target: Tensor) -> Tensor:
+def n_mpjpe(predicted: Tensor, target: Tensor, mask: Optional[Tensor] = None) -> Tensor:
     """
     Normalized MPJPE (scale only), adapted from:
     https://github.com/hrhodin/UnsupervisedGeometryAwareRepresentationLearning/blob/master/losses/poses.py
@@ -98,7 +101,7 @@ def n_mpjpe(predicted: Tensor, target: Tensor) -> Tensor:
     norm_predicted = predicted.square().sum(dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
     norm_target = (target * predicted).sum(dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
     scale = norm_target / norm_predicted
-    return loss_mpjpe(scale * predicted, target)
+    return loss_mpjpe(scale * predicted, target, mask)
 
 
 def get_limb_lengths(pose: Tensor) -> Tensor:
@@ -129,16 +132,18 @@ def loss_limb_var(x: Tensor) -> Tensor:
     return limb_lens.var(dim=-2).mean()
 
 
-def loss_limb_gt(x: Tensor, gt: Tensor) -> Tensor:
+def loss_limb_gt(x: Tensor, gt: Tensor, mask: Optional[Tensor] = None) -> Tensor:
     """
     Input: (N, T, 17, 3), (N, T, 17, 3)
     """
     limb_lens_x = get_limb_lengths(x)
     limb_lens_gt = get_limb_lengths(gt)  # (N, T, 16)
+    if mask is not None:
+        return (mask[..., None]*(limb_lens_x - limb_lens_gt)).norm(dim=-1).sum() / mask.sum()
     return nn.functional.l1_loss(limb_lens_x, limb_lens_gt)
 
 
-def loss_velocity(predicted: Tensor, target: Tensor) -> Tensor:
+def loss_velocity(predicted: Tensor, target: Tensor, mask: Optional[Tensor] = None) -> Tensor:
     """Mean per-joint velocity error (i.e. mean Euclidean distance of the 1st derivative (i.e. the difference between
     consecutive frames)).
     :param predicted: The predicted pose. Shape: (B?, V?, S, J, D).
@@ -148,10 +153,15 @@ def loss_velocity(predicted: Tensor, target: Tensor) -> Tensor:
     assert predicted.shape == target.shape
     if predicted.shape[-3] <= 1:
         return torch.FloatTensor(1).fill_(0.0)[0].to(predicted.device)
+    if mask is not None:
+        # Expand mask to such that velocity is computed only for consecutive frames where mask is True
+        mask = mask[..., 1:] * mask[..., :-1]
+        return (mask[..., None, None]*(predicted.diff(dim=-3) - target.diff(dim=-3))).norm(dim=-1).sum() / mask.sum()
+    
     return (predicted.diff(dim=-3) - target.diff(dim=-3)).norm(dim=-1).mean()
 
 
-def loss_angle(x: Tensor, gt: Tensor) -> Tensor:
+def loss_angle(x: Tensor, gt: Tensor, mask: Optional[Tensor] = None) -> Tensor:
     """Calculates the l1 loss of the limb angles of two poses.
 
     :param x: The predicted pose. Shape: (B?, V?, S?, 17, 3).
@@ -160,10 +170,12 @@ def loss_angle(x: Tensor, gt: Tensor) -> Tensor:
     """
     limb_angles_x = limb_angles(x)
     limb_angles_gt = limb_angles(gt)
+    if mask is not None:
+        return (mask[..., None]*(limb_angles_x - limb_angles_gt)).norm(1, dim=-1).sum() / mask.sum()
     return nn.functional.l1_loss(limb_angles_x, limb_angles_gt)
 
 
-def loss_angle_velocity(x: Tensor, gt: Tensor) -> Tensor:
+def loss_angle_velocity(x: Tensor, gt: Tensor, mask: Optional[Tensor] = None) -> Tensor:
     """Mean per-angle velocity error (i.e. mean Euclidean distance of the 1st derivative)
 
     :param x: The predicted pose. Shape: (V?, B?, S, 17, 3).
@@ -177,6 +189,9 @@ def loss_angle_velocity(x: Tensor, gt: Tensor) -> Tensor:
     gt_a = limb_angles(gt)
     x_av = x_a.diff(dim=-2)
     gt_av = gt_a.diff(dim=-2)
+    if mask is not None:
+        mask = mask[..., 1:] * mask[..., :-1]
+        return (mask[..., None]*(x_av - gt_av)).norm(1, dim=-1).sum() / mask.sum()
     return nn.functional.l1_loss(x_av, gt_av)
 
 
@@ -213,7 +228,6 @@ def consistency_loss(v1: Tensor, v2: Tensor) -> Tensor:
     v1_aligned = ((v1_unrolled @ R.mT * c).T + t.mT.T).T.view(v1.shape)
     view_mpjpe = (v1_aligned - v2).norm(dim=-1).mean(dim=(-2, -1))
 
-
     return view_mpjpe.mean()
 
 
@@ -223,11 +237,12 @@ def consistency_loss_moving_camera(v1: Tensor, v2: Tensor) -> Tensor:
     The aligment is done per frame to handle moving cameras.
     """
     assert v1.shape == v2.shape
-    
     c, R, t = rigid_transform_3D(v1[..., None, :, :], v2[..., None, :, :])
     v1_aligned = ((v1 @ R.mT * c).T + t.mT.T).T
+    if masks is not None:
+        masks = masks[0]*masks[1]
+        return (masks[..., None, None]*(v1_aligned - v2)).norm(dim=-1).mean(dim=-1).sum() / masks.sum()
     view_mpjpe = (v1_aligned - v2).norm(dim=-1).mean(dim=(-2, -1))
-    
     return view_mpjpe.mean()
 
 
