@@ -23,7 +23,7 @@ from lib.utils.tools import *
 from lib.utils.learning import *
 from lib.utils.utils_data import flip_data
 from lib.data.dataset_motion_2d import PoseTrackDataset2D, InstaVDataset2D
-from lib.data.dataset_motion_3d import MotionDataset3D
+from lib.data.dataset_motion_3d import MotionDataset3D, SkiPoseDataset3D
 from lib.data.augmentation import Augmenter2D
 from lib.data.datareader_h36m import DataReaderH36M
 from lib.model.loss import *
@@ -137,11 +137,17 @@ def train_epoch(
     assert has_3d == True, "We do not support no 3D data yet."
 
     model_pos.train()
-    for idx, (batch_input, target, performer_id) in enumerate(tqdm(train_loader)):
+    for idx, batch in enumerate(tqdm(train_loader)):
+        if len(batch) == 3:
+            (batch_input, target, performer_id) = batch
+            frame_exist = torch.ones_like(target[..., 0, 0], dtype=torch.float)
+        else:
+            (batch_input, target, performer_id, frame_exist, pred_2d) = batch
         batch_size = len(batch_input)
         if torch.cuda.is_available():
             batch_input = batch_input.cuda()
             target = target.cuda()
+            frame_exist = frame_exist.cuda()
         with torch.no_grad():
             if no_confidence:
                 batch_input = batch_input[..., :2]
@@ -166,7 +172,7 @@ def train_epoch(
         loss_total = torch.zeros(1, device=predicted_pose.device)
         if special_performer.any():
             for loss, weight, name in function_weight_label:
-                value = loss(predicted_pose[special_performer], target[special_performer])
+                value = loss(predicted_pose[special_performer], target[special_performer], frame_exist[special_performer])
                 losses[name].update(value.item(), batch_size)
                 loss_total += weight * value
 
@@ -181,7 +187,7 @@ def train_epoch(
 
         if predicted_pose.size(1) > 1:
             view_pairs = (*zip(*combinations(range(predicted_pose.size(1)), 2)),)
-            consistency = consistency_loss(*predicted_pose[:, view_pairs, ...].unbind(1))
+            consistency = loss_consistency(*predicted_pose[:, view_pairs, ...].unbind(1), frame_exist[:, view_pairs].unbind(1))
             losses["consistency"].update(consistency.item(), batch_size)
             loss_total += args.lambda_consistency * consistency
 
@@ -220,8 +226,12 @@ def train_with_config(args, opts):
           'persistent_workers': True
     }
 
-    train_dataset = MotionDataset3D(args, args.subset_list, 'train')
-    test_dataset = MotionDataset3D(args, args.subset_list, 'test')
+    if args.get("dataset") == "skipose":
+        train_dataset = SkiPoseDataset3D(args, args.subset_list, 'train', train_views=args.train_views)
+        test_dataset = SkiPoseDataset3D(args, args.subset_list, 'test', train_views=args.train_views)
+    else:
+        train_dataset = MotionDataset3D(args, args.subset_list, 'train')
+        test_dataset = MotionDataset3D(args, args.subset_list, 'test')
     train_loader_3d = DataLoader(train_dataset, **trainloader_params)
     test_loader = DataLoader(test_dataset, **testloader_params)
     
