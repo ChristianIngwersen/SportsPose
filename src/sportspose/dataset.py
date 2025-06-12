@@ -476,7 +476,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         measurement = self.measurements[measure_idx]
         return sample_method(self, measurement)
 
-    def add_frames(self, image_idx_range, joint_idx, measurement, measurement_idx, ts_view):
+    def add_frames(self, image_idx_range, measurement, measurement_idx, ts_view):
         """Helper function for adding data samples containing (measurement, images, and corresponding markers)
         Args:
             image_idx_range (range): The range of the images in the sequence
@@ -491,15 +491,12 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         if len(image_idx_range) != self.seq_size:
             return
 
-        # Get marker indices from timestamps
-        marker_idxs = range(joint_idx, joint_idx+self.seq_size)
-
         image_idxs = list(image_idx_range)
 
         # Skip entire sequence if there is an invalid frame
         if measurement.joints_3d["valid_frames"] is not None:
             try:
-                valid_frames = measurement.joints_3d["valid_frames"][marker_idxs]
+                valid_frames = measurement.joints_3d["valid_frames"][image_idx_range]
                 if self.do_skip_invalid_frames and not np.all(valid_frames):
                     return
             except KeyError:
@@ -512,7 +509,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
                 return
 
         # Class for bookmarking: measurement, images, and corresponding markers
-        syn_idx = SyncIndex(measurement_idx, image_idxs, marker_idxs)
+        syn_idx = SyncIndex(measurement_idx, image_idxs, image_idx_range)
         self.index_map[self.index] = syn_idx
         self.index += 1
         return self.index - 1  # Return the index in frames
@@ -587,8 +584,8 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         # Go through images in chunks of seq size
         frame_seqs = chunks(range(start, stop), self.seq_size, overlap_size)
         if self.filter_datapoint(measurement):
-            for joint_idx, image_idx_range in enumerate(frame_seqs):
-                frame_idx = self.add_frames(image_idx_range, joint_idx, measurement, measurement_idx, ts_view)
+            for image_idx_range in frame_seqs:
+                frame_idx = self.add_frames(image_idx_range, measurement, measurement_idx, ts_view)
                 if frame_idx is not None:
                     # If datapoint was added, also add it to the measurement list
                     frame_idxs[seq_added] = frame_idx
