@@ -19,6 +19,7 @@ author={Ingwersen, Christian Keilstrup and Mikkelstrup, Christian and Jensen,
     Janus N{\o}rtoft and Hannemose, Morten Rieger and Dahl, Anders Bjorholm},
 booktitle={Proceedings of the IEEE/CVF International Workshop on Computer Vision in Sports},
 year={2023}
+}
 
 @inproceedings{ingwersen2025two,
   title={Two views are better than one: Monocular 3d pose estimation with multiview consistency},

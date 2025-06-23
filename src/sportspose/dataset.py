@@ -10,7 +10,7 @@ import torch.utils.data
 from PIL import Image
 
 from sportspose.camera import Camera
-from sportspose.utils import SPORTSPOSE_CAMERA_INDEX_RIGHT, VIEW_TO_SERIAL, chunks
+from sportspose.utils import SPORTSPOSE_CAMERA_INDEX, VIEW_TO_SERIAL, chunks
 
 
 class Measurement:
@@ -159,8 +159,13 @@ def sportspose_load_function(data_dir, video_root_dir, views={"right": {}}):
     measurements = []
 
     # Update known indices for sessions
-    if "right" in views:
-        views["right"].update(SPORTSPOSE_CAMERA_INDEX_RIGHT)
+    for view in views:
+        if view in SPORTSPOSE_CAMERA_INDEX:
+            views[view].update(SPORTSPOSE_CAMERA_INDEX[view])
+        else:
+            raise AssertionError(
+                f"View has to be one of {SPORTSPOSE_CAMERA_INDEX.keys()}, but tried to find {view}!"
+            )
 
     # regex to find propperly named folders/files
     re_day = r"^[inout]+doors$"
@@ -330,7 +335,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
         ts_view="right",
         do_skip_invalid_frames=True,
         convert_3d_points=None,
-        views=["right"],
+        views="all",
         transform=None,
         swing_idxs=None,
         video_root_dir=None,
@@ -374,6 +379,12 @@ class SportsPoseDataset(torch.utils.data.Dataset):
             self.sample_uniform if sample_method is None else sample_method
         )
         self.validation_dataset = validation_dataset
+        pos_views = SPORTSPOSE_CAMERA_INDEX.keys()
+        if isinstance(views, str) and views in pos_views:
+            views = [views]
+        if views == "all":
+            views = pos_views
+        
         if dataset_type.lower() == "sportspose":
 
             if video_root_dir is None:
@@ -382,7 +393,7 @@ class SportsPoseDataset(torch.utils.data.Dataset):
             data_dir = os.path.join(data_dir, "data")
 
             self.measurements = sportspose_load_function(
-                data_dir, video_root_dir, views={"right": {}}
+                data_dir, video_root_dir, views={view: {} for view in views}
             )
 
         # Check if the settings for returning batches are a preset or custom setting
